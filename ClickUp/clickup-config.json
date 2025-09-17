@@ -1,0 +1,26 @@
+{
+  "listId": "{{ $env.CLICKUP_LIST_ID }}",
+  "parentTaskId": "{{ $env.PARENT_TASK_ID }}",
+  "name": "Client Onboarding",
+  "customFields": [
+    {
+      "id": "client-info",
+      "name": "Client Info",
+      "type": "text"
+    }
+  ],
+  "roadmapStages": [
+    {
+      "title": "Stage 1: Onboarding",
+      "description": "Complete OB form and initial setup"
+    },
+    {
+      "title": "Stage 2: Campaign Planning",
+      "description": "Plan ad campaigns and content"
+    },
+    {
+      "title": "Stage 3: Launch",
+      "description": "Launch campaigns and monitor"
+    }
+  ]
+}
