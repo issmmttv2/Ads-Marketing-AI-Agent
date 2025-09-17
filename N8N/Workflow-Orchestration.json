@@ -1,0 +1,593 @@
+{
+  "name": "Marketing Dashboard and Automations",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 24
+            }
+          ]
+        }
+      },
+      "id": "schedule-trigger-dashboard",
+      "name": "Daily Dashboard Update",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [
+        240,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "resource": "adAccount",
+        "operation": "getInsights",
+        "adAccountId": "={{ $env.META_AD_ACCOUNT_ID }}",
+        "timeRange": {
+          "type": "lastNDays",
+          "days": 30
+        },
+        "fields": {
+          "additionalFields": {
+            "level": "campaign",
+            "datePreset": "last_30d",
+            "timeIncrement": "1",
+            "breakdowns": []
+          }
+        }
+      },
+      "id": "meta-api-fetch",
+      "name": "Fetch Meta Ads Data",
+      "type": "n8n-nodes-base.facebookGraphApi",
+      "typeVersion": 1,
+      "position": [
+        460,
+        300
+      ],
+      "credentials": {
+        "facebookGraphApiOAuth2Api": {
+          "id": "meta-cred",
+          "name": "Meta API Credentials"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "https://api.gohighlevel.com/v1/contacts",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.GHL_API_KEY }}"
+            }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "limit",
+              "value": "100"
+            },
+            {
+              "name": "from",
+              "value": "{{ new Date(Date.now() - 30*24*60*60*1000).toISOString() }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "ghl-fetch-calls",
+      "name": "Fetch GHL Calls Data",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        460,
+        460
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Calculate metrics from Meta data\n// Assume input from Meta: ad_spend, impressions, clicks, etc.\n// From GHL: booked_calls, shown_up_calls\nconst metaData = $input.first().json;\nconst ghlData = $('Fetch GHL Calls Data').first().json;\n\n// Simplified calculations\nlet totalSpend = metaData.spend || 0;\nlet clicks = metaData.clicks || 0;\nlet impressions = metaData.impressions || 0;\nlet cpc = clicks > 0 ? totalSpend / clicks : 0;\nlet ctr = impressions > 0 ? (clicks / impressions) * 100 : 0;\nlet bookedCalls = ghlData.booked || 0;\nlet shownCalls = ghlData.shown || 0;\nlet cpl = bookedCalls > 0 ? totalSpend / bookedCalls : 0;\nlet cpbc = bookedCalls > 0 ? totalSpend / bookedCalls : 0;\nlet cplc = shownCalls > 0 ? totalSpend / shownCalls : 0;\n\n// Daily history over 30 days (loop or aggregate)\nconst dailyData = []; // Placeholder: aggregate daily from data\n\nreturn [{ json: { totalSpend, cpc, ctr, cpl, cpbc, cplc, dailyData } }];"
+      },
+      "id": "calculate-metrics",
+      "name": "Calculate Metrics",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        680,
+        380
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "{{ $env.GOOGLE_SHEET_ID }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Dashboard",
+          "mode": "name"
+        },
+        "range": "A1",
+        "options": {
+          "valueInputMode": "USER_ENTERED"
+        },
+        "data": "=[\n  ['Ad Spend', '{{ $json.totalSpend }}'],\n  ['CPC', '{{ $json.cpc }}'],\n  ['CTR', '{{ $json.ctr }}%'],\n  ['CPL', '{{ $json.cpl }}'],\n  ['CPBC', '{{ $json.cpbc }}'],\n  ['CPLC', '{{ $json.cplc }}'],\n  // Daily history table\n  ['Daily Data', ...$json.dailyData.map(d => [d.date, d.spend, ...])],\n  // Timeline tables: similar for 3d,7d,etc. - use functions or multiple ranges\n];"
+      },
+      "id": "update-sheets-dashboard",
+      "name": "Update Google Sheets Dashboard",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.4,
+      "position": [
+        900,
+        380
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "google-cred",
+          "name": "Google Sheets Credentials"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "tally-form-webhook",
+        "options": {}
+      },
+      "id": "tally-webhook",
+      "name": "Tally Form Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        240,
+        600
+      ],
+      "webhookId": "tally-client-form"
+    },
+    {
+      "parameters": {
+        "resource": "task",
+        "operation": "create",
+        "listId": {
+          "__rl": true,
+          "value": "{{ $env.CLICKUP_LIST_ID }}",
+          "mode": "listId"
+        },
+        "title": "New Client: {{ $json.clientName }}",
+        "description": "OB Form filled",
+        "assignees": [],
+        "dueDate": "",
+        "priority": 1,
+        "customFields": {
+          "customFieldsValues": [
+            {
+              "id": "client-info",
+              "value": "{{ JSON.stringify($json) }}"
+            }
+          ]
+        },
+        "parent": "{{ $env.PARENT_TASK_ID }}"
+      },
+      "id": "create-clickup-task",
+      "name": "Create ClickUp Client Task",
+      "type": "n8n-nodes-base.clickup",
+      "typeVersion": 1,
+      "position": [
+        460,
+        600
+      ],
+      "credentials": {
+        "clickupApi": {
+          "id": "clickup-cred",
+          "name": "ClickUp Credentials"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "task",
+        "operation": "createSubtask",
+        "taskId": "={{ $node['Create ClickUp Client Task'].json.id }}",
+        "title": "Status Change Automation",
+        "description": "Subtasks based on roadmap",
+        "subtasks": [
+          {
+            "title": "Stage 1: Onboarding",
+            "description": "OB Form Complete"
+          }
+        ]
+      },
+      "id": "create-subtasks",
+      "name": "Create Roadmap Subtasks",
+      "type": "n8n-nodes-base.clickup",
+      "typeVersion": 1,
+      "position": [
+        680,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "attachment",
+        "operation": "upload",
+        "taskId": "={{ $node['Create ClickUp Client Task'].json.id }}",
+        "fileName": "Client Answers.txt",
+        "binaryData": true,
+        "binaryPropertyName": "data",
+        "options": {
+          "fileContent": "{{ JSON.stringify($input.all()) }}"
+        }
+      },
+      "id": "attach-answers",
+      "name": "Attach Form Answers",
+      "type": "n8n-nodes-base.clickup",
+      "typeVersion": 1,
+      "position": [
+        900,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "model": "gpt-4",
+        "prompt": "Create offer based on client info: {{ $json.clientDetails }} using knowledge database.",
+        "options": {}
+      },
+      "id": "gpt-offer-creation",
+      "name": "GPT Offer Creation",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1,
+      "position": [
+        240,
+        800
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "openai-cred",
+          "name": "OpenAI Credentials"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "model": "gpt-4",
+        "prompt": "Generate ad copy for {{ $json.campaign }} with knowledge base.",
+        "options": {}
+      },
+      "id": "gpt-ad-copy",
+      "name": "GPT Ad Copy Creation",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1,
+      "position": [
+        460,
+        800
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "image",
+        "operation": "generate",
+        "prompt": "Design ad image for {{ $json.adConcept }}",
+        "options": {
+          "model": "dall-e-3",
+          "size": "1024x1024"
+        }
+      },
+      "id": "gpt-ad-image",
+      "name": "GPT Ad Image Design",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1,
+      "position": [
+        680,
+        800
+      ]
+    },
+    {
+      "parameters": {
+        "model": "gpt-4",
+        "prompt": "Create ad opt-in autoresponder based on {{ $json.clientInfo }} from OB form.",
+        "options": {}
+      },
+      "id": "gpt-autoresponder",
+      "name": "GPT Autoresponder",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1,
+      "position": [
+        900,
+        800
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 18 * * 5"
+            }
+          ]
+        }
+      },
+      "id": "schedule-sales-report",
+      "name": "EOW Sales Report Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [
+        240,
+        1000
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://api.gohighlevel.com/v1/sales",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.GHL_API_KEY }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "fetch-sales-data",
+      "name": "Fetch Sales Data",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        460,
+        1000
+      ]
+    },
+    {
+      "parameters": {
+        "channel": "{{ $env.SLACK_CHANNEL }}",
+        "text": "EOW Report: Dials: {{ $json.dials }}, Quotes Booked: {{ $json.quotesBooked }}, Closed Revenue: {{ $json.closedRevenue }}",
+        "options": {}
+      },
+      "id": "send-slack-report",
+      "name": "Send Slack Sales Report",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [
+        680,
+        1000
+      ],
+      "credentials": {
+        "slackApi": {
+          "id": "slack-cred",
+          "name": "Slack Credentials"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "{{ $env.CLIENT_SHEET_ID }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Client Performance",
+          "mode": "name"
+        },
+        "range": "A1",
+        "options": {
+          "valueInputMode": "USER_ENTERED"
+        },
+        "data": "=[\n  ['Client', 'Ad Spend', 'CPC', 'CTR', 'CPL', 'CPQ'],\n];"
+      },
+      "id": "update-client-dashboard",
+      "name": "Update Client Dashboard",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.4,
+      "position": [
+        900,
+        1000
+      ]
+    },
+    {
+      "parameters": {
+        "url": "{{ $env.MAKE_WEBHOOK_URL }}",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "data",
+              "value": "{{ JSON.stringify($json) }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "send-to-make",
+      "name": "Sync with Make",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1120,
+        380
+      ]
+    }
+  ],
+  "connections": {
+    "Daily Dashboard Update": {
+      "main": [
+        [
+          {
+            "node": "Fetch Meta Ads Data",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Fetch GHL Calls Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Meta Ads Data": {
+      "main": [
+        [
+          {
+            "node": "Calculate Metrics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch GHL Calls Data": {
+      "main": [
+        [
+          {
+            "node": "Calculate Metrics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calculate Metrics": {
+      "main": [
+        [
+          {
+            "node": "Update Google Sheets Dashboard",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Sync with Make",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tally Form Webhook": {
+      "main": [
+        [
+          {
+            "node": "Create ClickUp Client Task",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create ClickUp Client Task": {
+      "main": [
+        [
+          {
+            "node": "Create Roadmap Subtasks",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "GPT Offer Creation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Roadmap Subtasks": {
+      "main": [
+        [
+          {
+            "node": "Attach Form Answers",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GPT Offer Creation": {
+      "main": [
+        [
+          {
+            "node": "GPT Ad Copy Creation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GPT Ad Copy Creation": {
+      "main": [
+        [
+          {
+            "node": "GPT Ad Image Design",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GPT Ad Image Design": {
+      "main": [
+        [
+          {
+            "node": "GPT Autoresponder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "EOW Sales Report Trigger": {
+      "main": [
+        [
+          {
+            "node": "Fetch Sales Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Sales Data": {
+      "main": [
+        [
+          {
+            "node": "Send Slack Sales Report",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Update Client Dashboard",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 2,
+  "updatedAt": "2025-09-17T00:00:00.000Z",
+  "versionId": "1"
+}
