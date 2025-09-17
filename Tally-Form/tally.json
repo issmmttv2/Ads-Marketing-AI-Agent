@@ -1,0 +1,35 @@
+{
+  "formId": "tally-form-id",
+  "name": "Client Onboarding Form",
+  "fields": [
+    {
+      "id": "clientName",
+      "type": "TEXT",
+      "label": "Client Name",
+      "required": true
+    },
+    {
+      "id": "clientDetails",
+      "type": "TEXTAREA",
+      "label": "Client Business Details",
+      "required": true
+    },
+    {
+      "id": "campaign",
+      "type": "TEXT",
+      "label": "Campaign Name",
+      "required": true
+    },
+    {
+      "id": "adConcept",
+      "type": "TEXT",
+      "label": "Ad Concept Description",
+      "required": false
+    }
+  ],
+  "webhook": {
+    "url": "{{ $env.N8N_WEBHOOK_URL }}/webhook/tally-form-webhook",
+    "method": "POST",
+    "enabled": true
+  }
+}
